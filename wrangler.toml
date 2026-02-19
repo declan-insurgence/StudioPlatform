@@ -1,0 +1,37 @@
+name = "studio-platform-mcp"
+main = "src/index.ts"
+compatibility_date = "2025-02-10"
+workers_dev = true
+
+[assets]
+directory = "./widget/dist"
+binding = "ASSETS"
+
+[[durable_objects.bindings]]
+name = "SESSION_DO"
+class_name = "SessionDO"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["SessionDO"]
+
+[env.dev]
+name = "studio-platform-mcp-dev"
+
+[[env.dev.durable_objects.bindings]]
+name = "SESSION_DO"
+class_name = "SessionDO"
+
+[env.test]
+name = "studio-platform-mcp-test"
+
+[[env.test.durable_objects.bindings]]
+name = "SESSION_DO"
+class_name = "SessionDO"
+
+[env.prod]
+name = "studio-platform-mcp-prod"
+
+[[env.prod.durable_objects.bindings]]
+name = "SESSION_DO"
+class_name = "SessionDO"

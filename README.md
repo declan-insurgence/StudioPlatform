@@ -1,38 +1,71 @@
-# Demo Studio Platform (MVP)
+# Studio Platform MCP on Cloudflare Workers
 
-Demo Studio is an internal sales enablement platform for rapidly assembling branded AI demos from governed templates.
+This repository now runs as a **single Cloudflare Worker deployment** that hosts:
+- A remote MCP server (`/sse` + `/mcp`)
+- Stateful MCP sessions via Durable Objects
+- A self-contained React widget (JS/CSS inlined into HTML tool output)
 
-This MVP provides a backend API aligned to the CEO draft requirements:
-- Template gallery + approval workflow
-- Demo instance creation, cloning, and publishing
-- Web + Teams/SharePoint embed link generation
-- Guest access grants with **Safe Demo Mode** defaults
-- ChatGPT external app registry + deep-link metadata
-- Per-demo analytics endpoint scaffold
+## Architecture
 
-## Quick start
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -e .[dev]
-uvicorn app.main:app --reload
+```text
+src/
+  index.ts        # Worker entry + MCP server routes
+  data.ts         # Domain logic used by MCP tools
+  session-do.ts   # Durable Object for session state
+widget/
+  src/index.tsx   # Widget entry point
+  src/app.tsx     # Widget UI
+  vite.config.ts  # Build emits index.js + style.css for inlining
+.github/workflows/deploy.yml
+wrangler.toml
 ```
 
-## Test
+## Local development
 
 ```bash
-pytest
+pnpm install
+pnpm --dir widget install
+pnpm dev
 ```
 
-## API highlights
+Worker runs on `http://localhost:8787`.
 
-- `POST /templates` – create template (Developer/Admin)
-- `POST /templates/{id}/approve` – approve template
-- `POST /demos` – create demo from approved template (Sales/SE/Admin)
-- `POST /demos/{id}/publish` – publish demo (SE/Admin)
-- `GET /demos/{id}/share` – web + embed URLs
-- `POST /guest-grants` – create guest grant with expiry/budgets/safe mode
-- `POST /guest-grants/{id}/revoke` – revoke guest access immediately
-- `POST /chatgpt-apps` – register external ChatGPT app
-- `GET /analytics/{demo_id}` – engagement/cost snapshot
+### Useful scripts
+
+- `pnpm build` - build widget and dry-run worker bundle
+- `pnpm tunnel` - expose localhost for ChatGPT testing
+- `pnpm inspector` - run MCP inspector against `http://localhost:8787/sse`
+- `pnpm deploy:dev|test|prod`
+- `pnpm logs:dev|test|prod`
+
+## Connecting to ChatGPT
+
+1. Deploy (or tunnel) the worker.
+2. In ChatGPT MCP connector setup, use the Worker **SSE URL**:
+   - `https://<your-worker-domain>/sse`
+3. The streamable HTTP endpoint is:
+   - `https://<your-worker-domain>/mcp`
+4. Verify health:
+   - `https://<your-worker-domain>/health` should return `ok`
+
+### Local endpoint checklist
+
+- `GET http://localhost:8787/` => connection instructions JSON
+- `GET http://localhost:8787/health` => 200 OK
+- `GET http://localhost:8787/sse` => SSE transport
+- `POST http://localhost:8787/mcp` => streamable HTTP MCP
+
+### Troubleshooting
+
+- If widget HTML is blank, run `pnpm --dir widget build` and redeploy.
+- If ChatGPT connection fails, ensure you configured the `/sse` URL (not root).
+- If state is not retained, verify Durable Object binding `SESSION_DO` is present in `wrangler.toml` and deployed migration `v1` was applied.
+
+## CI/CD
+
+GitHub Actions workflow `.github/workflows/deploy.yml` deploys:
+- **dev** on pull request opened/updated
+- **test** on pushes to `main`
+- **prod** via `workflow_dispatch`
+
+Use GitHub environments `dev`, `test`, `prod` and add protection rules to `prod` for manual approval.

@@ -1,0 +1,20 @@
+:root {
+  color-scheme: light;
+  font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+}
+
+body {
+  margin: 0;
+  background: #f6f8fb;
+  color: #101828;
+}
+
+main {
+  margin: 0;
+  padding: 20px;
+}
+
+h1 {
+  margin: 0 0 8px;
+  font-size: 20px;
+}
