@@ -1,0 +1,14 @@
+[project]
+name = "demo-studio-platform"
+version = "0.1.0"
+description = "MVP domain/service layer for Demo Studio sales enablement platform"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0.0"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
