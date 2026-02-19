@@ -38,6 +38,20 @@ Worker runs on `http://localhost:8787`.
 - `pnpm deploy:dev|test|prod`
 - `pnpm logs:dev|test|prod`
 
+
+## Local end-to-end demo script (PowerShell)
+
+Use the script below to build, launch, validate, and optionally keep the local worker running for a live demo:
+
+```powershell
+pwsh ./scripts/local-e2e-demo.ps1
+```
+
+Options:
+- `-SkipInstall` skips dependency installation if already installed
+- `-KeepRunning` leaves `pnpm dev` running after tests for live walkthroughs
+- `-BaseUrl` overrides the target URL (default `http://127.0.0.1:8787`)
+
 ## Connecting to ChatGPT
 
 1. Deploy (or tunnel) the worker.
