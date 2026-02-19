@@ -30,7 +30,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: pnpm
       - run: pnpm install
       - run: pnpm --dir widget install
       - run: pnpm deploy:dev
@@ -50,7 +49,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: pnpm
       - run: pnpm install
       - run: pnpm --dir widget install
       - run: pnpm deploy:test
@@ -70,7 +68,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: pnpm
       - run: pnpm install
       - run: pnpm --dir widget install
       - run: pnpm deploy:${{ github.event.inputs.environment }}
