@@ -1,0 +1,23 @@
+{
+  "name": "studio-platform-worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "build": "pnpm --dir widget build && wrangler deploy --dry-run",
+    "tunnel": "cloudflared tunnel --url http://localhost:8787",
+    "deploy:dev": "pnpm --dir widget build && wrangler deploy --env dev",
+    "deploy:test": "pnpm --dir widget build && wrangler deploy --env test",
+    "deploy:prod": "pnpm --dir widget build && wrangler deploy --env prod",
+    "logs:dev": "wrangler tail --env dev",
+    "logs:test": "wrangler tail --env test",
+    "logs:prod": "wrangler tail --env prod",
+    "inspector": "npx @modelcontextprotocol/inspector http://localhost:8787/sse"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250208.0",
+    "typescript": "^5.8.2",
+    "wrangler": "^4.11.1"
+  }
+}
