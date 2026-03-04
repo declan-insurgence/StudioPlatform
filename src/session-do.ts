@@ -1,3 +1,5 @@
+import { DurableObject } from "cloudflare:workers";
+
 export type SessionState = {
   sessionId: string;
   requestCount: number;
