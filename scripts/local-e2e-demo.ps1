@@ -28,6 +28,20 @@ function Assert-True {
     Write-Host "PASS: $Message" -ForegroundColor Green
 }
 
+function Invoke-NativeCommand {
+    param(
+        [Parameter(Mandatory)] [string]$FilePath,
+        [string[]]$Arguments = @()
+    )
+
+    & $FilePath @Arguments
+    $exitCode = $LASTEXITCODE
+    if ($exitCode -ne 0) {
+        $argsText = if ($Arguments.Count -gt 0) { " $($Arguments -join ' ')" } else { "" }
+        throw "Command failed with exit code ${exitCode}: $FilePath$argsText"
+    }
+}
+
 function Invoke-JsonRpc {
     param(
         [Parameter(Mandatory)] [string]$Method,
@@ -57,6 +71,7 @@ $stdoutLog = Join-Path $logDir "wrangler-dev.stdout.log"
 $stderrLog = Join-Path $logDir "wrangler-dev.stderr.log"
 
 $devProcess = $null
+$locationPushed = $false
 
 try {
     Write-Step "Validating prerequisites"
@@ -67,15 +82,16 @@ try {
     }
 
     Push-Location $repoRoot
+    $locationPushed = $true
 
     if (-not $SkipInstall) {
         Write-Step "Installing dependencies"
-        & pnpm install --frozen-lockfile
-        & pnpm --dir widget install --frozen-lockfile
+        Invoke-NativeCommand -FilePath "pnpm" -Arguments @("install", "--frozen-lockfile")
+        Invoke-NativeCommand -FilePath "pnpm" -Arguments @("--dir", "widget", "install", "--frozen-lockfile")
     }
 
     Write-Step "Building widget assets"
-    & pnpm --dir widget build
+    Invoke-NativeCommand -FilePath "pnpm" -Arguments @("--dir", "widget", "build")
 
     Write-Step "Starting worker locally (pnpm dev)"
     if (Test-Path $stdoutLog) { Remove-Item $stdoutLog -Force }
@@ -164,7 +180,7 @@ try {
 
     Assert-True ($textResponse -match "Demo Demo Day created") "create_demo_widget confirms demo creation"
     Assert-True ($widgetHtml -match "<!doctype html>") "create_demo_widget returns HTML document"
-    Assert-True ($widgetHtml -match "<div id=\"root\"></div>") "widget HTML includes root mount node"
+    Assert-True ($widgetHtml -match '<div id="root"></div>') "widget HTML includes root mount node"
 
     Write-Step "All local E2E checks passed. Ready for demo."
     Write-Host "Session ID used: $SessionId" -ForegroundColor Yellow
@@ -185,5 +201,7 @@ finally {
         Stop-Process -Id $devProcess.Id -Force
     }
 
-    Pop-Location
+    if ($locationPushed) {
+        Pop-Location
+    }
 }
