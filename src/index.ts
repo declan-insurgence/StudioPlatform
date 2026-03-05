@@ -15,7 +15,8 @@ type JsonRpcRequest = {
   params?: Record<string, unknown>;
 };
 
-const sseClients = new Map<string, WritableStreamDefaultWriter<string>>();
+const encoder = new TextEncoder();
+const sseClients = new Map<string, ReadableStreamDefaultController<Uint8Array>>();
 
 function jsonRpcResult(id: JsonRpcRequest["id"], result: unknown) {
   return { jsonrpc: "2.0", id: id ?? null, result };
@@ -50,7 +51,7 @@ async function loadWidgetHtml(env: Env): Promise<string> {
   const js = jsResponse.ok ? await jsResponse.text() : "console.error('widget js missing');";
   const css = cssResponse.ok ? await cssResponse.text() : "";
 
-  return `<!doctype html><html><head><meta charset=\"utf-8\"/><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"/><style>${css}</style></head><body><div id=\"root\"></div><script>${js}</script></body></html>`;
+  return `<!doctype html><html><head><meta charset=\"utf-8\"/><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"/><style>${css}</style></head><body><div id=\"root\"></div><script>window.process=window.process||{env:{NODE_ENV:'production'}};${js}</script></body></html>`;
 }
 
 async function handleMcp(req: JsonRpcRequest, env: Env, sessionId: string) {
@@ -124,21 +125,25 @@ async function handleMcp(req: JsonRpcRequest, env: Env, sessionId: string) {
 }
 
 async function handleSse(sessionId: string) {
-  const stream = new TransformStream<string, Uint8Array>({
-    transform(chunk, controller) {
-      controller.enqueue(new TextEncoder().encode(chunk));
+  let streamController: ReadableStreamDefaultController<Uint8Array> | null = null;
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      streamController = controller;
+      sseClients.set(sessionId, controller);
+      controller.enqueue(encoder.encode(`event: ready\ndata: ${JSON.stringify({ sessionId })}\n\n`));
+    },
+    cancel() {
+      // Ignore stale disconnects from replaced connections with the same session id.
+      if (streamController && sseClients.get(sessionId) === streamController) {
+        sseClients.delete(sessionId);
+      }
     },
   });
 
-  const writer = stream.writable.getWriter();
-  sseClients.set(sessionId, writer);
-  await writer.write(`event: ready\ndata: ${JSON.stringify({ sessionId })}\n\n`);
-
-  return new Response(stream.readable, {
+  return new Response(stream, {
     headers: {
       "content-type": "text/event-stream",
       "cache-control": "no-cache",
-      connection: "keep-alive",
       "x-session-id": sessionId,
     },
   });
@@ -171,9 +176,16 @@ export default {
       const sessionId = request.headers.get("x-session-id") ?? crypto.randomUUID();
       const payload = (await request.json()) as JsonRpcRequest;
       const responsePayload = await handleMcp(payload, env, sessionId);
-      const writer = sseClients.get(sessionId);
-      if (writer) {
-        await writer.write(`event: message\ndata: ${JSON.stringify(responsePayload)}\n\n`);
+      const controller = sseClients.get(sessionId);
+      if (controller) {
+        try {
+          controller.enqueue(encoder.encode(`event: message\ndata: ${JSON.stringify(responsePayload)}\n\n`));
+        } catch {
+          // Only clear if this failing controller is still the active mapping.
+          if (sseClients.get(sessionId) === controller) {
+            sseClients.delete(sessionId);
+          }
+        }
       }
       return Response.json(responsePayload, { headers: { "x-session-id": sessionId } });
     }

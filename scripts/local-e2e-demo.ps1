@@ -64,6 +64,28 @@ function Invoke-JsonRpc {
     return Invoke-RestMethod -Uri "$BaseUrl/mcp" -Method Post -Headers @{ "x-session-id" = $SessionId } -ContentType "application/json" -Body $jsonBody
 }
 
+function Get-AvailableLogPath {
+    param([Parameter(Mandatory)] [string]$Path)
+
+    if (-not (Test-Path $Path)) {
+        return $Path
+    }
+
+    try {
+        Remove-Item $Path -Force -ErrorAction Stop
+        return $Path
+    }
+    catch {
+        $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
+        $directory = Split-Path -Parent $Path
+        $name = [System.IO.Path]::GetFileNameWithoutExtension($Path)
+        $extension = [System.IO.Path]::GetExtension($Path)
+        $fallback = Join-Path $directory "$name.$timestamp$extension"
+        Write-Host "WARN: Could not clear existing log '$Path'. Using '$fallback'." -ForegroundColor Yellow
+        return $fallback
+    }
+}
+
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $logDir = Join-Path $repoRoot ".tmp"
 New-Item -ItemType Directory -Path $logDir -Force | Out-Null
@@ -72,6 +94,9 @@ $stderrLog = Join-Path $logDir "wrangler-dev.stderr.log"
 
 $devProcess = $null
 $locationPushed = $false
+$pnpmExecutable = "pnpm"
+$isWindowsPowerShellDesktop = $PSVersionTable.PSEdition -eq "Desktop"
+$existingWranglerDevPids = @()
 
 try {
     Write-Step "Validating prerequisites"
@@ -81,23 +106,36 @@ try {
         Assert-True ($null -ne $exists) "$cmd is available"
     }
 
+    if ($env:OS -eq "Windows_NT") {
+        $pnpmCmd = Get-Command "pnpm.cmd" -ErrorAction SilentlyContinue
+        if ($null -ne $pnpmCmd) {
+            $pnpmExecutable = $pnpmCmd.Source
+        }
+
+        $existingWranglerDevPids = @(
+            Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+            Where-Object { $_.CommandLine -and $_.CommandLine -match "wrangler dev" } |
+            Select-Object -ExpandProperty ProcessId
+        )
+    }
+
     Push-Location $repoRoot
     $locationPushed = $true
 
     if (-not $SkipInstall) {
         Write-Step "Installing dependencies"
-        Invoke-NativeCommand -FilePath "pnpm" -Arguments @("install", "--frozen-lockfile")
-        Invoke-NativeCommand -FilePath "pnpm" -Arguments @("--dir", "widget", "install", "--frozen-lockfile")
+        Invoke-NativeCommand -FilePath $pnpmExecutable -Arguments @("install", "--frozen-lockfile")
+        Invoke-NativeCommand -FilePath $pnpmExecutable -Arguments @("--dir", "widget", "install", "--frozen-lockfile")
     }
 
     Write-Step "Building widget assets"
-    Invoke-NativeCommand -FilePath "pnpm" -Arguments @("--dir", "widget", "build")
+    Invoke-NativeCommand -FilePath $pnpmExecutable -Arguments @("--dir", "widget", "build")
 
     Write-Step "Starting worker locally (pnpm dev)"
-    if (Test-Path $stdoutLog) { Remove-Item $stdoutLog -Force }
-    if (Test-Path $stderrLog) { Remove-Item $stderrLog -Force }
+    $stdoutLog = Get-AvailableLogPath -Path $stdoutLog
+    $stderrLog = Get-AvailableLogPath -Path $stderrLog
 
-    $devProcess = Start-Process -FilePath "pnpm" -ArgumentList "dev" -WorkingDirectory $repoRoot -RedirectStandardOutput $stdoutLog -RedirectStandardError $stderrLog -PassThru
+    $devProcess = Start-Process -FilePath $pnpmExecutable -ArgumentList "dev" -WorkingDirectory $repoRoot -RedirectStandardOutput $stdoutLog -RedirectStandardError $stderrLog -PassThru
     Assert-True (-not $devProcess.HasExited) "wrangler dev process started"
 
     Write-Step "Waiting for /health to become ready"
@@ -106,7 +144,15 @@ try {
     while ((Get-Date) -lt $deadline) {
         Start-Sleep -Milliseconds 750
         try {
-            $health = Invoke-WebRequest -Uri "$BaseUrl/health" -Method Get -TimeoutSec 2
+            $healthRequestParams = @{
+                Uri = "$BaseUrl/health"
+                Method = "Get"
+                TimeoutSec = 2
+            }
+            if ($isWindowsPowerShellDesktop) {
+                $healthRequestParams.UseBasicParsing = $true
+            }
+            $health = Invoke-WebRequest @healthRequestParams
             if ($health.StatusCode -eq 200 -and $health.Content.Trim() -eq "ok") {
                 $ready = $true
                 break
@@ -129,13 +175,18 @@ try {
     Assert-True ($root.connect.streamableHttp -eq "$BaseUrl/mcp") "root endpoint advertises MCP URL"
 
     Write-Step "Testing SSE endpoint headers"
+    if (-not ("System.Net.Http.HttpClient" -as [type])) {
+        Add-Type -AssemblyName "System.Net.Http"
+    }
     $httpClient = [System.Net.Http.HttpClient]::new()
     $request = $null
     $response = $null
     try {
         $request = [System.Net.Http.HttpRequestMessage]::new([System.Net.Http.HttpMethod]::Get, "$BaseUrl/sse")
         $request.Headers.Add("x-session-id", $SessionId)
-        $response = $httpClient.Send($request, [System.Net.Http.HttpCompletionOption]::ResponseHeadersRead)
+        $sendTask = $httpClient.SendAsync($request, [System.Net.Http.HttpCompletionOption]::ResponseHeadersRead)
+        $sendTask.Wait()
+        $response = $sendTask.Result
         Assert-True ($response.IsSuccessStatusCode) "SSE endpoint returns success status"
         Assert-True ($response.Content.Headers.ContentType.MediaType -eq "text/event-stream") "SSE endpoint returns text/event-stream"
     }
@@ -199,6 +250,19 @@ finally {
     if ($null -ne $devProcess -and -not $KeepRunning -and -not $devProcess.HasExited) {
         Write-Step "Stopping pnpm dev (PID $($devProcess.Id))"
         Stop-Process -Id $devProcess.Id -Force
+    }
+
+    if ($env:OS -eq "Windows_NT" -and -not $KeepRunning) {
+        $currentWranglerDev = @(
+            Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+            Where-Object { $_.CommandLine -and $_.CommandLine -match "wrangler dev" }
+        )
+        foreach ($proc in $currentWranglerDev) {
+            if ($existingWranglerDevPids -notcontains $proc.ProcessId) {
+                Write-Step "Stopping detached wrangler dev (PID $($proc.ProcessId))"
+                Stop-Process -Id $proc.ProcessId -Force -ErrorAction SilentlyContinue
+            }
+        }
     }
 
     if ($locationPushed) {
