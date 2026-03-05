@@ -125,13 +125,18 @@ async function handleMcp(req: JsonRpcRequest, env: Env, sessionId: string) {
 }
 
 async function handleSse(sessionId: string) {
+  let streamController: ReadableStreamDefaultController<Uint8Array> | null = null;
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
+      streamController = controller;
       sseClients.set(sessionId, controller);
       controller.enqueue(encoder.encode(`event: ready\ndata: ${JSON.stringify({ sessionId })}\n\n`));
     },
     cancel() {
-      sseClients.delete(sessionId);
+      // Ignore stale disconnects from replaced connections with the same session id.
+      if (streamController && sseClients.get(sessionId) === streamController) {
+        sseClients.delete(sessionId);
+      }
     },
   });
 
@@ -176,7 +181,10 @@ export default {
         try {
           controller.enqueue(encoder.encode(`event: message\ndata: ${JSON.stringify(responsePayload)}\n\n`));
         } catch {
-          sseClients.delete(sessionId);
+          // Only clear if this failing controller is still the active mapping.
+          if (sseClients.get(sessionId) === controller) {
+            sseClients.delete(sessionId);
+          }
         }
       }
       return Response.json(responsePayload, { headers: { "x-session-id": sessionId } });
