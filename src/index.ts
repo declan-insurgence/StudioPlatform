@@ -51,7 +51,7 @@ async function loadWidgetHtml(env: Env): Promise<string> {
   const js = jsResponse.ok ? await jsResponse.text() : "console.error('widget js missing');";
   const css = cssResponse.ok ? await cssResponse.text() : "";
 
-  return `<!doctype html><html><head><meta charset=\"utf-8\"/><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"/><style>${css}</style></head><body><div id=\"root\"></div><script>${js}</script></body></html>`;
+  return `<!doctype html><html><head><meta charset=\"utf-8\"/><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"/><style>${css}</style></head><body><div id=\"root\"></div><script>window.process=window.process||{env:{NODE_ENV:'production'}};${js}</script></body></html>`;
 }
 
 async function handleMcp(req: JsonRpcRequest, env: Env, sessionId: string) {
